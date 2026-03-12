@@ -1,0 +1,684 @@
+{
+  "name": "Amazon Kindle Bestseller Data Extraction and Structuring Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "9b986db4-c5fc-4b58-bbdd-d06c8fe95fe5",
+      "name": "Start Scraping",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2656,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.amazon.com/Best-Sellers-Kindle-Store-Paranormal-Romance/zgbs/digital-text/6190484011",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "f8666202-b5b9-4a28-b29d-d03697eff879",
+      "name": "Fetch Bestseller Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2432,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "url",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "id": "c8ac890c-b9a3-49c3-bb35-d778c7244b9a",
+      "name": "Split Books Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -1744,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1.2
+      },
+      "id": "9780d8b9-2e99-4189-bbad-63f4ed03ff96",
+      "name": "Rate Limit Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1520,
+        240
+      ],
+      "webhookId": "950db912-3039-401d-8a90-faf144d602ac"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.amazon.com{{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "37110f38-edeb-4994-988f-93197afe0544",
+      "name": "Fetch Book Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1296,
+        320
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "description",
+              "cssSelector": "#bookDescription_feature_div span, #productDescription p, #productDescription, #bookDescription_feature_div"
+            },
+            {
+              "key": "publisher",
+              "cssSelector": "#rpi-attribute-book_details-publisher .rpi-attribute-value, #detailBullets_feature_div li"
+            },
+            {
+              "key": "publicationDate",
+              "cssSelector": "#rpi-attribute-book_details-publication_date .rpi-attribute-value, #detailBullets_feature_div li"
+            },
+            {
+              "key": "metadata",
+              "cssSelector": "script[type=\"application/ld+json\"]",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "03829d56-b91c-42dc-a029-5fddf4d5b12e",
+      "name": "Extract Book Details",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        -1072,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "9fca5523-1306-4fb3-a910-3d64c3b128e8",
+      "name": "Combine Book Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -848,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Clean and normalize the book data\nconst item = $input.item.json;\n\n// Extract numeric rating from text like '4.6 out of 5 stars'\nlet rating = null;\nconst ratingText = String(item.rating || \"\");\n\nif (typeof item.rating === 'string') {\n  const ratingMatch = ratingText.match(/([0-9.]+)\\s*out\\s*of\\s*5/i);\n  if (ratingMatch) {\n    rating = parseFloat(ratingMatch[1]);\n  }\n}\n\n// Extract numeric review count from text like '12,540 ratings'\nlet reviewCount = null;\nconst reviewsText = String(item.reviews || \"\");\n\nif (item.reviews) {\n  const reviewMatch = reviewsText.match(/([0-9,]+)\\s*ratings?/i);\n  if (reviewMatch) {\n    reviewCount = parseInt(reviewMatch[1].replace(/,/g, ''), 10);\n  }\n}\n\n// Remove commas from price and convert to number\nlet price = null;\nconst priceText = String(item.price || \"\");\n\nif (item.price) {\n  const priceMatch = priceText.match(/\\$?([0-9,.]+)/);\n  if (priceMatch) {\n    price = parseFloat(priceMatch[1].replace(/,/g, ''));\n  }\n}\n\n// Convert publication date to ISO format YYYY-MM-DD\nlet publicationDate = null;\nif (item.publicationDate) {\n  try {\n    const date = new Date(item.publicationDate);\n    if (!isNaN(date.getTime())) {\n      publicationDate = date.toISOString().split('T')[0];\n    }\n  } catch (e) {\n    publicationDate = item.publicationDate;\n  }\n}\n\n// Ensure URLs are complete absolute URLs\nlet url = item.url;\nif (url && !url.startsWith('http')) {\n  url = 'https://www.amazon.com' + (url.startsWith('/') ? url : '/' + url);\n}\n\n// Return cleaned and normalized data\nreturn {\n  rank: item.rank,\n  title: item.title,\n  author: item.author,\n  rating: rating,\n  reviewCount: reviewCount,\n  price: price,\n  url: url,\n  description: item.description,\n  publisher: item.publisher,\n  publicationDate: publicationDate\n};"
+      },
+      "id": "665a5d16-d2d8-4547-b4a8-0febb64186af",
+      "name": "Clean and Normalize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1qGatyq6-KUD3v14vJ7SO48Z72qf5lNzo2dFp7fD1j8w",
+          "mode": "list",
+          "cachedResultName": "Amazon_Paranormal_Romance_Dataset",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1qGatyq6-KUD3v14vJ7SO48Z72qf5lNzo2dFp7fD1j8w/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1qGatyq6-KUD3v14vJ7SO48Z72qf5lNzo2dFp7fD1j8w/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "data"
+          ],
+          "schema": [
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "rank",
+              "displayName": "rank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author",
+              "displayName": "author",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reviewCount",
+              "displayName": "reviewCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "price",
+              "displayName": "price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "publisher",
+              "displayName": "publisher",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "publicationDate",
+              "displayName": "publicationDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c86a30da-0cfb-4c6a-a876-f0af7a1152c9",
+      "name": "Amazon_Paranormal_Romance_Dataset",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        464,
+        352
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "VbPT3DXgzSquLnaG",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "rank",
+              "cssSelector": ".zg-bdg-text",
+              "returnArray": true
+            },
+            {
+              "key": "title",
+              "cssSelector": "a[href*=\"/dp/\"] > span",
+              "returnArray": true
+            },
+            {
+              "key": "author",
+              "cssSelector": "a.a-size-small.a-link-child",
+              "returnArray": true
+            },
+            {
+              "key": "rating",
+              "cssSelector": "span.a-icon-alt",
+              "returnArray": true
+            },
+            {
+              "key": "reviews",
+              "cssSelector": "span.a-size-small",
+              "returnArray": true
+            },
+            {
+              "key": "price",
+              "cssSelector": "span.a-size-base.a-color-price",
+              "returnArray": true
+            },
+            {
+              "key": "url",
+              "cssSelector": ".zg-grid-general-faceout a[href*=\"/dp/\"]",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "793dd715-3739-4ea7-8f24-046283f4219e",
+      "name": "Extract Book List",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        -2208,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst seen = new Set();\nconst result = [];\n\nfor (const item of $input.all()) {\n\n  const urls = item.json.url || [];\n\n  for (const u of urls) {\n\n    if (!seen.has(u)) {\n\n      seen.add(u);\n\n      result.push({\n        json: {\n          ...item.json,\n          url: u\n        }\n      });\n\n    }\n\n  }\n\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2000,
+        240
+      ],
+      "id": "01caba2a-e145-4ee4-b141-6f747fd4e0c4",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst result = [];\n\nfor (const item of $input.all()) {\n\n  const scripts = item.json.metadata || [];\n\n  let description = null;\n  let publisher = null;\n  let publicationDate = null;\n\n  for (const script of scripts) {\n    try {\n      const data = JSON.parse(script);\n\n      if (data[\"@type\"] === \"Book\") {\n\n        description = data.description || description;\n        publicationDate = data.datePublished || publicationDate;\n\n        if (data.publisher) {\n          publisher = data.publisher.name || publisher;\n        }\n\n      }\n\n    } catch (e) {}\n  }\n\n  result.push({\n    json: {\n      ...item.json,\n      description,\n      publisher,\n      publicationDate\n    }\n  });\n\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        256
+      ],
+      "id": "1697c2f7-f43d-476c-bb1a-697e6324541d",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "amazon_bestsellers.csv"
+        }
+      },
+      "id": "39b086d7-add8-4db7-9570-efa50b321efc",
+      "name": "Export to CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        464,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "3eb3c623-777e-45c2-bb8b-9a1729a0c9d1",
+      "name": "Collect All Books",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        240,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "Rank",
+              "value": "={{ $json.rank }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "Title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "Author",
+              "value": "={{ $json.author }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "Rating",
+              "value": "={{ $json.rating }}",
+              "type": "number"
+            },
+            {
+              "id": "id-5",
+              "name": "Reviews",
+              "value": "={{ $json.reviews }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "Price",
+              "value": "={{ $json.price }}",
+              "type": "number"
+            },
+            {
+              "id": "id-7",
+              "name": "URL",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "id-8",
+              "name": "Description",
+              "value": "={{ $json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "id-9",
+              "name": "Publisher",
+              "value": "={{ $json.publisher }}",
+              "type": "string"
+            },
+            {
+              "id": "id-10",
+              "name": "Publication_Date",
+              "value": "={{ $json.publicationDate }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d55b9b1e-b068-4598-ad00-7bb149ef8d8e",
+      "name": "Structure Final Dataset",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -192,
+        256
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Split Books Into Items": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Scraping": {
+      "main": [
+        [
+          {
+            "node": "Fetch Bestseller Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Bestseller Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Book List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Delay": {
+      "main": [
+        [
+          {
+            "node": "Fetch Book Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine Book Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Book Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Book Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Book Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Book Details": {
+      "main": [
+        [
+          {
+            "node": "Combine Book Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combine Book Data": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean and Normalize Data": {
+      "main": [
+        [
+          {
+            "node": "Structure Final Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Book List": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Split Books Into Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Clean and Normalize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect All Books": {
+      "main": [
+        [
+          {
+            "node": "Export to CSV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Amazon_Paranormal_Romance_Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structure Final Dataset": {
+      "main": [
+        [
+          {
+            "node": "Collect All Books",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "66886409-6880-45bb-814f-ca35b057d513",
+  "meta": {
+    "instanceId": "da027b12b602fd9698a2ebb368b55003f3fbb3af89842311fadb7feaaff87bab"
+  },
+  "id": "1d6uIK6sDDQNYoJo",
+  "tags": []
+}
